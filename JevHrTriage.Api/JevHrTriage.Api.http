@@ -1,0 +1,27 @@
+@JevHrTriage.Api_HostAddress = http://localhost:5218
+
+GET {{JevHrTriage.Api_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{JevHrTriage.Api_HostAddress}}/api/demo/samples
+Accept: application/json
+
+###
+
+POST {{JevHrTriage.Api_HostAddress}}/api/hr/triage
+Content-Type: application/json
+Accept: application/json
+
+{
+	"subject": "Overtime missing and portal locked",
+	"message": "My overtime is missing and I am locked out of the HR portal so I cannot submit corrections today.",
+	"employeeId": "EMP-1120",
+	"payPeriod": "2026-09-01 to 2026-09-15",
+	"hrSystemName": "Workday",
+	"country": "US",
+	"employmentType": "FullTime"
+}
+
+###

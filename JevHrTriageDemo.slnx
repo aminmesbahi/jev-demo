@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="JevHrTriage.Api/JevHrTriage.Api.csproj" />
+  <Project Path="JevHrTriage.Tests/JevHrTriage.Tests.csproj" />
+</Solution>
