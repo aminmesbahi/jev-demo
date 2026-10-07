@@ -1,239 +1,172 @@
-# Jev HR Service-Request Triage Demo (ASP.NET Core)
+# Jev HR Triage Demo
 
-Practical demo API for HR service-request triage using TypeSafe Jev via OpenRouter Decisions API.
+A small ASP.NET Core API that shows how to triage HR service requests with [Jev](https://openrouter.ai/typesafe/jev-1.13), TypeSafe's decision model, served through OpenRouter's Decisions API.
 
-This demo is intentionally limited to recommendation-only triage:
-- It returns a suggested queue and review status.
-- It does not contact employees.
-- It does not create tickets in external systems.
+You send it an employee's request, for example "my overtime is missing and I'm locked out of Workday", and it tells you two things:
 
-## Chosen Stack
+1. **What Jev thinks:** the category, how urgent it is, whether it mixes several topics, and whether the message looks underspecified. Each answer comes with probabilities.
+2. **What the application decides:** which queue it would go to, whether it can be auto-routed or needs a human, which required details are missing, and which rules led there.
 
-- .NET target framework: net10.0
-- Project type: ASP.NET Core Web API + Swagger UI
-- JSON: System.Text.Json
-- HTTP: IHttpClientFactory + typed HttpClient
-- Tests: xUnit
+The demo doesn't act on anything. It never contacts employees or creates tickets. It only recommends.
 
-## What Jev Decides vs What C# Decides
+## Why Jev and not a chat model?
 
-Jev judgments (model output):
-- Category (Choice)
-- Urgency (Score, fractional)
-- Multiple topics detection (Noul)
-- Message-level missing-info signal (Noul)
+Triage is a decision problem, not a writing problem. With a chat model you write a prompt, ask for JSON, parse it, and hope the label is one you recognise. You also get no reliable sense of how sure the model was.
 
-C# deterministic logic (application output):
-- Category-to-queue mapping (explicit dictionary)
-- Required structured fields by category
-- Clarification prompts from fixed templates
-- Human-review thresholds (confidence, probability gap, multiple topics, urgency confidence, missing fields)
-- Final review status and suggested queue
+Jev works differently. You give it a `state` (the request) and a set of typed questions, and it answers with one of the options you defined plus a probability for each. There is nothing to parse and no free text to hallucinate. The probabilities are what you threshold on. Each call costs fractions of a cent, because input is billed at about $0.042 per million tokens and output is free.
 
-## Endpoints
+The rule this demo follows: **Jev judges, C# decides.** Jev answers narrow questions about the language. Everything with business consequences lives in plain, testable C#: queue mapping, required fields, review thresholds and clarification wording.
 
-- POST /api/hr/triage
-	- Analyze one request and return:
-		- mode (Live or Mock)
-		- Jev judgments (separate section)
-		- Application recommendation (separate section)
-		- latency and usage/cost when available
-- GET /api/demo/samples
-	- Six realistic synthetic requests for demo coverage:
-		- straightforward
-		- urgency
-		- missing information
-		- ambiguity
-		- multiple topics
-		- requires review
-- GET /health
-	- Health status only, no paid inference call
+## Getting started
 
-## OpenRouter Decisions API Contract Used
-
-- Endpoint: POST https://openrouter.ai/api/alpha/decisions
-- Model default: typesafe/jev-1.13
-- Auth: Bearer token (OPENROUTER_API_KEY)
-
-The implementation uses state + questions and typed answers. It does not use chat completions.
-
-## Prerequisites
-
-- .NET SDK that supports net10.0
-- Optional for Live mode: OpenRouter API key with credits
-
-## Setup and Run
-
-1. Restore and build:
+You need a .NET SDK that supports `net10.0`.
 
 ```powershell
-dotnet restore JevHrTriageDemo.slnx
 dotnet build JevHrTriageDemo.slnx
-```
-
-2. Run tests:
-
-```powershell
-dotnet test JevHrTriageDemo.slnx --no-build
-```
-
-3. Run API:
-
-```powershell
+dotnet test JevHrTriageDemo.slnx
 dotnet run --project JevHrTriage.Api --launch-profile http
 ```
 
-4. Open Swagger UI:
+Then open http://localhost:5218/swagger. The easiest tour:
 
-- http://localhost:5218/swagger
+1. `GET /api/demo/samples` returns six synthetic requests: a routine one, an urgent one, one with missing info, an ambiguous one, a multi-topic one, and one that needs review.
+2. Paste one of them into `POST /api/hr/triage`.
 
-## Mode Switching (Mock vs Live)
+[JevHrTriage.Api.http](JevHrTriage.Api/JevHrTriage.Api.http) has the same calls if you prefer running them from your editor.
 
-Default is Mock mode in appsettings.
+### Mock mode vs Live mode
 
-### Mock mode
+By default the app runs in **Mock** mode. It needs no API key, costs nothing, and gives the same answer every time, which makes it right for tests and offline demos. The mock is crude keyword matching, though. It shows the shape of the flow, not how good Jev is. To make that clear, every mock response is marked `isSynthetic: true`, at the top level and on each judgment.
 
-- No credentials required
-- Deterministic synthetic fixtures
-- Response explicitly labels synthetic judgments:
-	- top-level isSynthetic
-	- per-judgment isSynthetic
-
-### Live mode
-
-Set mode and key before run:
+To use the real model, switch to **Live** mode and give it an OpenRouter key:
 
 ```powershell
-$env:OPENROUTER_API_KEY = "your_key_here"
-dotnet user-secrets init --project JevHrTriage.Api
-dotnet user-secrets set "TriageDemo:Mode" "Live" --project JevHrTriage.Api
-# optional if you prefer user secrets over env var:
-dotnet user-secrets set "OpenRouter:ApiKey" "your_key_here" --project JevHrTriage.Api
-```
-
-Alternative without user secrets:
-
-```powershell
-$env:OPENROUTER_API_KEY = "your_key_here"
+$env:OPENROUTER_API_KEY = "sk-or-..."
 dotnet run --project JevHrTriage.Api --launch-profile http -- TriageDemo:Mode=Live
 ```
 
-Important behavior:
-- If Live mode fails, the API returns explicit ProblemDetails errors.
-- It does not silently switch to Mock mode.
+If you'd rather not use environment variables, user secrets work too:
 
-## Demo Requests
+```powershell
+dotnet user-secrets set "TriageDemo:Mode" "Live" --project JevHrTriage.Api
+dotnet user-secrets set "OpenRouter:ApiKey" "sk-or-..." --project JevHrTriage.Api
+```
 
-Use the ready-to-run file:
+Live mode never quietly falls back to Mock. If OpenRouter fails, you get an error, not a fake answer that looks real.
 
-- JevHrTriage.Api/JevHrTriage.Api.http
+## How a request flows
 
-Includes:
-- GET /health
-- GET /api/demo/samples
-- POST /api/hr/triage
+```
+TriageRequest ──► JevDecisionProvider ──► OpenRouter /api/alpha/decisions (one call, 4 questions)
+                         │
+                         ▼
+                  JevJudgments ──► TriageWorkflowService (thresholds, mapping, required fields)
+                                          │
+                                          ▼
+                                   TriageResponse
+```
 
-## Example Triage Response Shape
+**One call, four questions.** Jev answers every question in the same request, in parallel, so adding a question barely changes latency. The questions are:
 
-- mode
-- model
-- upstreamLatencyMs
-- usage (cost/tokens/provider when available)
-- jevJudgments
-	- category (choice + probabilities + confidence)
-	- urgency (score + probabilities + confidence)
-	- multipleTopics (noul)
-	- missingInfoInMessage (noul)
-- applicationRecommendation
-	- suggestedQueue
-	- reviewStatus (AutoRoute or HumanReview)
-	- reviewReasons
-	- missingRequiredFields
-	- clarificationPrompts
-	- appliedRules
+| Question            | Type     | What it asks                                                     |
+|---------------------|----------|------------------------------------------------------------------|
+| `category`          | choice   | payroll, leave, benefits, onboarding, HR system access, or other/unclear |
+| `urgency`           | score    | routine → time-sensitive → urgent (pay, legal timing or work blocked) |
+| `multiple_topics`   | noul     | Does this mix two or more separate HR issues?                   |
+| `missing_information` | noul   | Judging the text alone, is key detail missing?                  |
 
-## Architecture (Small, Understandable)
+("Noul" is Jev's yes/no question type. It returns the probability of "yes".)
 
-- Controllers:
-	- api/hr/triage
-	- api/demo/samples
-- Services:
-	- JevDecisionProvider (Live + Mock)
-	- OpenRouterDecisionsClient
-	- TriageWorkflowService (business logic)
-	- SampleDataService
-- Models:
-	- request/response DTOs
-	- OpenRouter request/response contracts
-- Options:
-	- TriageDemo thresholds/mode/model/timeout
-	- OpenRouter base URL/path/key
+**The application then decides.** [TriageWorkflowService](JevHrTriage.Api/Services/TriageWorkflowService.cs) maps the category to a queue using an explicit dictionary, and checks which structured fields that category needs. Payroll, for example, needs an employee ID and a pay period. It then runs the review rules. If any rule fires, the request goes to `HumanReview`, otherwise to `AutoRoute`. Each rule writes a line into `appliedRules` with the actual value and threshold, so you can always see why a request ended up where it did.
 
-## Error Handling
+Clarification prompts come from fixed templates. Nothing in a response is invented by a model.
 
-ProblemDetails responses are returned for:
-- invalid input
-- missing configuration
-- authentication failures
-- insufficient credits
-- rate limits
-- timeouts
-- malformed upstream responses
+## Tuning the thresholds
 
-## Five-Minute Team Walkthrough
+Everything lives under `TriageDemo` in [appsettings.json](JevHrTriage.Api/appsettings.json):
 
-1. Business pain (45s)
-- HR inbox triage is noisy and inconsistent.
-- Misrouting slows SLA and employee satisfaction.
+| Setting                          | Default | Sends to review when…                                    |
+|----------------------------------|---------|----------------------------------------------------------|
+| `AutoRouteMinConfidence`         | 0.75    | category confidence is below this                        |
+| `ReviewIfCategoryGapBelow`       | 0.15    | the top two categories are closer than this              |
+| `ReviewIfMultipleTopicsAtLeast`  | 0.55    | the multi-topic probability is at or above this          |
+| `ReviewIfMissingInfoNoulAtLeast` | 0.60    | the missing-info probability is at or above this         |
+| `UrgentScoreThreshold`           | 1.6     | (marks the request urgent)                               |
+| `UrgentHighConfidenceThreshold`  | 0.80    | the request is urgent but urgency confidence is below this |
 
-2. What Jev does (60s)
-- Jev classifies category, scores urgency, detects multi-topic and missing-info signals.
-- It returns typed probabilities/confidence instead of text explanations.
+To be honest about these numbers: **they are reasonable starting points, not tuned values.** TypeSafe recommends choosing thresholds from a few hundred labeled examples and from what each kind of mistake costs. Misrouting a payroll problem is worse than sending one extra ticket to a human. A few things worth knowing before you tune:
 
-3. What C# does (75s)
-- Maps category to queue explicitly.
-- Applies risk-aware thresholds and review gates.
-- Validates required fields deterministically.
-- Generates clarification prompts from fixed templates (no invented details).
+- **Confidence is not accuracy.** It measures how concentrated Jev's probabilities are. A confident answer can still be wrong if the question was badly phrased.
+- **Answers vary slightly between calls.** Don't set a threshold right at the edge of your borderline cases.
+- **Pin the model version.** The default is `typesafe/jev-1.13`, not `~typesafe/jev-latest`, so your thresholds don't move under you when a new release ships.
 
-4. Show in Swagger (90s)
-- GET /api/demo/samples
-- POST /api/hr/triage using multi-topic sample
-- Highlight separate sections:
-	- jevJudgments
-	- applicationRecommendation
+## When things go wrong
 
-5. Reliability and governance (60s)
-- Mock mode is deterministic for demos/tests.
-- Live mode uses OpenRouter with explicit errors.
-- Valid structured output does not guarantee correct judgment.
-- Thresholds are demo defaults that require evaluation on real data.
+Errors come back as standard `ProblemDetails`:
 
-## Troubleshooting
+| You see | Meaning | What to do |
+|---------|---------|------------|
+| 400 | The request body is invalid | Fix the input |
+| 401 | Bad or missing API key | Check `OPENROUTER_API_KEY` / `OpenRouter:ApiKey` |
+| 402 | Out of OpenRouter credits | Top up |
+| 429 | Still rate limited after retries | Slow down |
+| 500 "Missing Configuration" | Live mode without a key | Set the key |
+| 502 "Upstream Unreachable" | Couldn't connect to OpenRouter | Check network / proxy |
+| 502 "Invalid Decisions Request" | OpenRouter rejected our payload (422) | This is a bug in the demo's question definitions, not your input |
+| 502 "Malformed Upstream Response" | OpenRouter answered, but not in the expected shape | The alpha API may have changed |
+| 503 | OpenRouter or the provider is overloaded | Try again shortly |
+| 504 | OpenRouter didn't answer within `LiveTimeoutSeconds` | Raise the timeout, or retry |
 
-- 401 Authentication Failed
-	- Check OPENROUTER_API_KEY or OpenRouter:ApiKey
-- 402 Insufficient Credits
-	- Add OpenRouter credits
-- 429 Rate Limited
-	- Retry with backoff; lower request frequency
-- 504 Upstream Timeout
-	- Increase TriageDemo:LiveTimeoutSeconds
-- Review rates too high/low
-	- Tune confidence and gap thresholds in TriageDemo settings
+**Retries.** Rate limits (429) and provider overload (529) are retried automatically. It uses exponential backoff with a little jitter, and respects `Retry-After` when OpenRouter sends one. Other errors fail immediately, because retrying a bad key or an empty balance only wastes time. You can tune this with `OpenRouter:MaxRetries` (default 2) and `OpenRouter:RetryBaseDelayMs` (default 500). Note that `LiveTimeoutSeconds` applies to each attempt, not to the whole sequence.
 
-## Verification Completed
+**Cancellation.** If the caller hangs up, the upstream call is cancelled and nothing is reported as a timeout. Only a real HttpClient timeout becomes a 504.
 
-Executed locally:
-- Build succeeded
-- Tests succeeded (6/6)
-- API launched on http://localhost:5218
-- Verified endpoints:
-	- GET /health
-	- GET /api/demo/samples
-	- POST /api/hr/triage
-	- GET /swagger/index.html
+## Logging and audit
 
-Live mode note:
-- Live OpenRouter call was not executed in this run because no API key was provided in-session.
-- Mock mode verification is complete and runnable.
+Every triage writes one structured log line with:
+
+- the mode
+- the model snapshot and OpenRouter's request id
+- the latency
+- the category probabilities, urgency, and the two noul values
+- the chosen queue, the review status, and the full list of reasons and applied rules
+
+The request id is also returned to the caller as `upstreamRequestId`, so you can match a response to OpenRouter's records.
+
+**The request text and employee fields are never logged on purpose.** The log has everything you need to replay and re-tune the thresholds, and nothing that identifies a person.
+
+## Project layout
+
+```
+JevHrTriage.Api/
+  Controllers/      HrController (triage), DemoController (samples)
+  Services/
+    JevDecisionProvider.cs        builds the questions, calls Jev (or the mock), parses answers
+    OpenRouterDecisionsClient.cs  HTTP, auth, retries, error mapping
+    TriageWorkflowService.cs      all the business rules
+    SampleDataService.cs          the six demo requests
+  Models/           request/response DTOs and OpenRouter contracts
+  Options/          TriageDemo and OpenRouter settings
+JevHrTriage.Tests/  xUnit tests for the client, the provider and the workflow rules
+```
+
+## A five-minute walkthrough for the team
+
+1. **The problem (under a minute).** The HR inbox is noisy. Misrouted requests bounce between teams and miss their SLA.
+2. **What Jev does (a minute).** Show the four questions. Point out that they are typed and that every answer has probabilities. There is no prompt-and-parse.
+3. **What C# does (a minute).** Open `TriageWorkflowService`: the queue map, the required fields, the thresholds. All of it is ordinary code that can be reviewed and tested.
+4. **Live in Swagger (90 seconds).** Run the multi-topic sample. Show `jevJudgments` and `applicationRecommendation` side by side, then read `appliedRules` aloud. It explains itself.
+5. **Honesty slide (a minute).** Structured output doesn't mean correct output. The thresholds still need real labeled data, and the mock is only a stand-in.
+
+## Known limitations
+
+- **Text and language:** Jev handles text only, and it is most accurate in English.
+- **Literal reading:** it answers the question exactly as written, so vague question wording turns into vague probabilities.
+- **Dates and arithmetic:** it is not reliable at these. Keep anything you can compute in code.
+- **Alpha API:** the Decisions API is still alpha (the path says so), and the request or response shape may change.
+- **Mock mode:** it is keyword matching and should not be used to judge quality.
+
+## Further reading
+
+- [Jev on OpenRouter](https://openrouter.ai/docs/guides/community/jev)
+- [TypeSafe docs](https://docs.typesafe.ai). The pages on confidence, patterns, and jev-1.13's known weaknesses are especially useful.

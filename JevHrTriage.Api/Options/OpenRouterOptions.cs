@@ -7,4 +7,6 @@ public sealed class OpenRouterOptions
     public string BaseUrl { get; set; } = "https://openrouter.ai";
     public string DecisionsPath { get; set; } = "/api/alpha/decisions";
     public string? ApiKey { get; set; }
+    public int MaxRetries { get; set; } = 2;
+    public int RetryBaseDelayMs { get; set; } = 500;
 }

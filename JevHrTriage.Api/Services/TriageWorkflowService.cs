@@ -40,11 +40,13 @@ public sealed class TriageWorkflowService : ITriageWorkflowService
 
     private readonly IJevDecisionProvider _provider;
     private readonly TriageDemoOptions _options;
+    private readonly ILogger<TriageWorkflowService> _logger;
 
-    public TriageWorkflowService(IJevDecisionProvider provider, IOptions<TriageDemoOptions> options)
+    public TriageWorkflowService(IJevDecisionProvider provider, IOptions<TriageDemoOptions> options, ILogger<TriageWorkflowService> logger)
     {
         _provider = provider;
         _options = options.Value;
+        _logger = logger;
     }
 
     public async Task<TriageResponse> AnalyzeAsync(TriageRequest request, CancellationToken cancellationToken)
@@ -64,6 +66,7 @@ public sealed class TriageWorkflowService : ITriageWorkflowService
         }
 
         var app = BuildRecommendation(request, decisionSet.Judgments, category, queue);
+        LogDecision(decisionSet, app);
 
         return new TriageResponse
         {
@@ -71,6 +74,7 @@ public sealed class TriageWorkflowService : ITriageWorkflowService
             IsSynthetic = _provider.IsSynthetic,
             SimulatedRoutingOnly = true,
             Model = decisionSet.Model,
+            UpstreamRequestId = decisionSet.RequestId,
             UpstreamLatencyMs = decisionSet.LatencyMs,
             Usage = decisionSet.Usage,
             JevJudgments = decisionSet.Judgments,
@@ -103,7 +107,7 @@ public sealed class TriageWorkflowService : ITriageWorkflowService
         rules.Add($"Top category probability gap = {topGap:0.00}; review if below {_options.ReviewIfCategoryGapBelow:0.00}.");
         if (topGap < _options.ReviewIfCategoryGapBelow)
         {
-            reviewReasons.Add("Category probabilities are too close (ambiguous category). ");
+            reviewReasons.Add("Category probabilities are too close (ambiguous category).");
         }
 
         rules.Add($"Multiple topics noul = {judgments.MultipleTopics.Noul:0.00}; review threshold = {_options.ReviewIfMultipleTopicsAtLeast:0.00}.");
@@ -148,6 +152,34 @@ public sealed class TriageWorkflowService : ITriageWorkflowService
         recommendation.ReviewStatus = reviewReasons.Count > 0 ? "HumanReview" : "AutoRoute";
         return recommendation;
     }
+
+    // Audit trail for threshold tuning. Logs judgments, thresholds and the outcome only;
+    // the request text and employee fields are deliberately left out.
+    private void LogDecision(JevDecisionSet decisionSet, AppRecommendation app)
+    {
+        var judgments = decisionSet.Judgments;
+        _logger.LogInformation(
+            "Triage decision. Mode={Mode} Model={Model} UpstreamRequestId={UpstreamRequestId} LatencyMs={LatencyMs} " +
+            "Category={Category} CategoryProbabilities={CategoryProbabilities} Urgency={Urgency} " +
+            "MultipleTopics={MultipleTopics} MissingInfo={MissingInfo} Queue={Queue} ReviewStatus={ReviewStatus} " +
+            "ReviewReasons={ReviewReasons} AppliedRules={AppliedRules}",
+            _provider.Mode,
+            decisionSet.Model,
+            decisionSet.RequestId,
+            decisionSet.LatencyMs,
+            judgments.Category.Choice,
+            FormatProbabilities(judgments.Category.Probabilities),
+            judgments.Urgency.Score,
+            judgments.MultipleTopics.Noul,
+            judgments.MissingInfoInMessage.Noul,
+            app.SuggestedQueue,
+            app.ReviewStatus,
+            string.Join(" | ", app.ReviewReasons),
+            string.Join(" | ", app.AppliedRules));
+    }
+
+    private static string FormatProbabilities(Dictionary<string, decimal> probabilities)
+        => string.Join(", ", probabilities.OrderByDescending(p => p.Value).Select(p => $"{p.Key}={p.Value:0.00}"));
 
     internal static decimal ComputeTopProbabilityGap(Dictionary<string, decimal> probabilities)
     {

@@ -15,6 +15,8 @@ public sealed class OpenRouterDecisionsClient : IOpenRouterDecisionsClient
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(10);
+
     private readonly HttpClient _httpClient;
     private readonly OpenRouterOptions _options;
 
@@ -27,21 +29,67 @@ public sealed class OpenRouterDecisionsClient : IOpenRouterDecisionsClient
     public async Task<DecisionsResponse> SubmitAsync(DecisionsRequest request, CancellationToken cancellationToken)
     {
         var apiKey = ResolveApiKey();
-        using var message = new HttpRequestMessage(HttpMethod.Post, _options.DecisionsPath)
+        var payload = JsonSerializer.Serialize(request, JsonOptions);
+
+        for (var attempt = 0; ; attempt++)
         {
-            Content = new StringContent(JsonSerializer.Serialize(request, JsonOptions), Encoding.UTF8, "application/json")
-        };
+            // A request message can only be sent once, so each attempt builds a fresh one.
+            using var message = new HttpRequestMessage(HttpMethod.Post, _options.DecisionsPath)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
 
-        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-        using var response = await _httpClient.SendAsync(message, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            HttpResponseMessage response;
+            try
+            {
+                response = await _httpClient.SendAsync(message, cancellationToken);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new TriageException(502, "Upstream Unreachable", $"Could not reach OpenRouter: {ex.Message}");
+            }
 
-        if (!response.IsSuccessStatusCode)
+            using (response)
+            {
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    return Parse(body);
+                }
+
+                if (attempt < _options.MaxRetries && IsRetryable(response.StatusCode))
+                {
+                    await Task.Delay(GetRetryDelay(response, attempt), cancellationToken);
+                    continue;
+                }
+
+                throw BuildError(response.StatusCode, body);
+            }
+        }
+    }
+
+    private static bool IsRetryable(HttpStatusCode statusCode)
+        => statusCode is (HttpStatusCode)429 or (HttpStatusCode)529;
+
+    private TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
+    {
+        var retryAfter = response.Headers.RetryAfter?.Delta;
+        if (retryAfter is { } delta && delta > TimeSpan.Zero)
         {
-            throw BuildError(response.StatusCode, body);
+            return delta < MaxRetryDelay ? delta : MaxRetryDelay;
         }
 
+        // Exponential backoff with a little jitter so parallel callers don't retry in lockstep.
+        var baseMs = Math.Max(0, _options.RetryBaseDelayMs);
+        var backoffMs = baseMs * (1 << attempt) + Random.Shared.Next(0, baseMs / 2 + 1);
+        return TimeSpan.FromMilliseconds(Math.Min(backoffMs, MaxRetryDelay.TotalMilliseconds));
+    }
+
+    private static DecisionsResponse Parse(string body)
+    {
         DecisionsResponse? parsed;
         try
         {
@@ -96,6 +144,8 @@ public sealed class OpenRouterDecisionsClient : IOpenRouterDecisionsClient
             HttpStatusCode.Forbidden => new TriageException(403, "Forbidden", detail),
             HttpStatusCode.NotFound => new TriageException(404, "Endpoint Not Found", detail),
             HttpStatusCode.RequestEntityTooLarge => new TriageException(413, "Payload Too Large", detail),
+            // 422 means our decisions payload failed upstream validation: a server-side bug, not bad caller input.
+            HttpStatusCode.UnprocessableEntity => new TriageException(502, "Invalid Decisions Request", detail),
             (HttpStatusCode)429 => new TriageException(429, "Rate Limited", detail),
             HttpStatusCode.BadGateway => new TriageException(502, "Provider Error", detail),
             HttpStatusCode.ServiceUnavailable => new TriageException(503, "Service Unavailable", detail),

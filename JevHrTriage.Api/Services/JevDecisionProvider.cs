@@ -55,8 +55,10 @@ public sealed class JevDecisionProvider : IJevDecisionProvider
         {
             response = await _client.SubmitAsync(decisionsRequest, cancellationToken);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            // Only HttpClient's own timeout lands here. If the caller cancelled, the exception
+            // propagates untouched so it isn't misreported as an upstream timeout.
             throw new TriageException(504, "Upstream Timeout", "The OpenRouter request timed out.");
         }
         finally
@@ -67,6 +69,7 @@ public sealed class JevDecisionProvider : IJevDecisionProvider
         return new JevDecisionSet
         {
             Model = response.Model ?? _options.Model,
+            RequestId = response.Id,
             Provider = response.Provider,
             LatencyMs = stopwatch.ElapsedMilliseconds,
             Usage = new UsageSnapshot

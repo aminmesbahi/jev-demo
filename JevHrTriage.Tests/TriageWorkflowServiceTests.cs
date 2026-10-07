@@ -1,6 +1,7 @@
 using JevHrTriage.Api.Models;
 using JevHrTriage.Api.Options;
 using JevHrTriage.Api.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace JevHrTriage.Tests;
@@ -134,7 +135,7 @@ public sealed class TriageWorkflowServiceTests
             UrgentHighConfidenceThreshold = 0.80m
         });
 
-        return new TriageWorkflowService(provider, options);
+        return new TriageWorkflowService(provider, options, NullLogger<TriageWorkflowService>.Instance);
     }
 
     private sealed class StubProvider : IJevDecisionProvider

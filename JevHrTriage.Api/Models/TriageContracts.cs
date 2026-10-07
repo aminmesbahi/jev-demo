@@ -47,6 +47,7 @@ public sealed class TriageResponse
     public bool IsSynthetic { get; set; }
     public bool SimulatedRoutingOnly { get; set; } = true;
     public string Model { get; set; } = string.Empty;
+    public string? UpstreamRequestId { get; set; }
     public long UpstreamLatencyMs { get; set; }
     public UsageSnapshot? Usage { get; set; }
     public JevJudgments JevJudgments { get; set; } = new();

@@ -63,6 +63,7 @@ public sealed class OpenRouterErrorData
 public sealed class JevDecisionSet
 {
     public string Model { get; set; } = string.Empty;
+    public string? RequestId { get; set; }
     public string? Provider { get; set; }
     public long LatencyMs { get; set; }
     public UsageSnapshot? Usage { get; set; }
