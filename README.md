@@ -23,7 +23,7 @@ You need a .NET SDK that supports `net10.0`.
 
 ```powershell
 dotnet build JevHrTriageDemo.slnx
-dotnet test JevHrTriageDemo.slnx
+dotnet test --solution JevHrTriageDemo.slnx
 dotnet run --project JevHrTriage.Api --launch-profile http
 ```
 
@@ -121,6 +121,60 @@ Errors come back as standard `ProblemDetails`:
 
 **Cancellation.** If the caller hangs up, the upstream call is cancelled and nothing is reported as a timeout. Only a real HttpClient timeout becomes a 504.
 
+## Comparing Jev with other models
+
+Jev isn't the only decision model any more. Several vendors now serve models that speak the same **System One** request shape (a `state` plus typed `choice` / `score` / `noul` questions), including Microsoft, Upstage, Liquid, Cloudflare, Perplexity, Inception and OpenAI. So does Microsoft Foundry, and so do local runtimes such as Ollama 0.35+. **JevHrTriage.Compare** is a small web app that asks all of them the same questions and shows the answers side by side.
+
+```powershell
+dotnet run --project JevHrTriage.Compare --launch-profile http
+```
+
+Then open http://localhost:5209. Pick contenders and questions, then press **Run comparison**.
+
+**What "the same questions" means here.** Every contender gets the exact state and question set the main API uses; they come from `TriageQuestions` in the API project. Every answer then goes through the same `TriagePolicy` routing rules. Any difference you see comes from the model, not from different prompts or rules.
+
+**The question set** is 20 synthetic requests, each with a human label: the six demo samples plus fourteen more. The new ones cover urgency, multiple topics, a French message, an out-of-scope question, a prompt-injection attempt, and an almost empty message. A few borderline requests accept more than one category.
+
+**The contenders** are set in [JevHrTriage.Compare/appsettings.json](JevHrTriage.Compare/appsettings.json):
+
+| Kind | Where | Examples |
+|------|-------|----------|
+| Decision model | OpenRouter Decisions API | Jev 1.13, Microsoft-Decision-1, Solar Decide Flash, Liquid D1, Clef Flash, pplx Decider 27B, Mercury Decide (free), GPT-6 Luna Decisions (off by default) |
+| Decision model | Your Microsoft Foundry deployment | Microsoft-Decision-1 (off until you set `Compare:Endpoints:Foundry:BaseUrl` and `AZURE_FOUNDRY_API_KEY`) |
+| Decision model | Local Ollama | Nimble (off until you run Ollama 0.35+ and `ollama pull nimble`) |
+| Chat LLM baseline | OpenRouter chat completions | GPT-5.4 nano, Gemini 3.5 Flash-Lite, Qwen3.5 9B |
+
+The chat LLMs are the "before" picture. They get the same questions as a prompt and must reply with probabilities as JSON. That reply is parsed into the same typed answers, and when parsing fails it counts as an error. Qwen3.5 9B is there on purpose: it is the base model Microsoft-Decision-1 was trained from, so you see the plain LLM next to its decision-trained version.
+
+Adding a model is just config. Any System One endpoint works, because only the base URL, path and auth header differ.
+
+**What you get:**
+
+- **A scorecard per model:**
+  - **Category accuracy:** how often it picked an acceptable category.
+  - **p(correct):** the average probability it put on the right answer.
+  - **Multi-topic and urgency accuracy.**
+  - **Auto-route rate:** how often the routing rules would send the request without a human.
+  - **Agreement with Jev.**
+  - **Consistency across repeats:** set Repeats above 1 to see it.
+  - **Latency:** p50 and p95.
+  - **Cost:** per 1,000 requests.
+  - **Errors.**
+- **Charts:** two bar charts, median latency and accuracy.
+- **A side-by-side grid:** one row per request, one column per model. Click a cell to see the full judgments, the routing reasons, and (for LLMs) the raw output.
+- **Download report JSON:** saves the whole run, so you can replay threshold changes offline.
+
+**Mock vs Live.** Like the API, it starts in Mock mode, so the page works without any keys. In Mock mode **every number is synthetic**: all models share one keyword mock plus noise, and their latencies are simulated. The page says so in a banner. For real results:
+
+```powershell
+$env:OPENROUTER_API_KEY = "sk-or-..."
+dotnet run --project JevHrTriage.Compare --launch-profile http -- Compare:Mode=Live
+```
+
+In Live mode, a contender that can't be called shows its reason in its own column ("No API key", "endpoint unreachable", "HTTP 429 …") rather than failing the whole run.
+
+Latency is measured end to end from this app, network included, and only successful calls count. There are deliberately no retries, because a retry would hide rate limits and inflate latency. When a provider doesn't report cost, it is estimated from token counts and the prices in config, and the estimate is marked with ≈. **Twenty requests is enough to see the shape of the differences, not to choose a vendor.** For that, add a few hundred labeled requests from your own inbox.
+
 ## Logging and audit
 
 Every triage writes one structured log line with:
@@ -141,13 +195,21 @@ The request id is also returned to the caller as `upstreamRequestId`, so you can
 JevHrTriage.Api/
   Controllers/      HrController (triage), DemoController (samples)
   Services/
-    JevDecisionProvider.cs        builds the questions, calls Jev (or the mock), parses answers
+    TriageQuestions.cs            the question set and answer parsing (shared with Compare)
+    TriagePolicy.cs               all the business rules: queue map, thresholds, required fields
+    JevDecisionProvider.cs        calls Jev (or the mock) with those questions
+    MockJudgments.cs              the keyword-based mock
     OpenRouterDecisionsClient.cs  HTTP, auth, retries, error mapping
-    TriageWorkflowService.cs      all the business rules
+    TriageWorkflowService.cs      provider → policy → response, plus audit logging
     SampleDataService.cs          the six demo requests
   Models/           request/response DTOs and OpenRouter contracts
   Options/          TriageDemo and OpenRouter settings
-JevHrTriage.Tests/  xUnit tests for the client, the provider and the workflow rules
+JevHrTriage.Compare/
+  Contenders/       System One client, chat-LLM baseline, mock, factory
+  Data/             the 20 labeled requests
+  Services/         runs every contender on every request and scores them
+  wwwroot/          the comparison page
+JevHrTriage.Tests/  xUnit tests for the client, provider, policy and comparison app
 ```
 
 ## A five-minute walkthrough for the team

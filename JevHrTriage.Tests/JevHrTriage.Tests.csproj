@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\JevHrTriage.Api\JevHrTriage.Api.csproj" />
+    <ProjectReference Include="..\JevHrTriage.Compare\JevHrTriage.Compare.csproj" />
   </ItemGroup>
 
 </Project>

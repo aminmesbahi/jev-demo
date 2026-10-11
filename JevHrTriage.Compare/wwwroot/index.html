@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision Model Comparison</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f4f2;
+    --surface-1: #fcfcfb;
+    --surface-2: #efefec;
+    --border: #dcdbd6;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #77756f;
+    --series-1: #2a78d6;
+    --accent: #2a78d6;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --banner-bg: #fff4dc;
+    --banner-border: #fab219;
+    --chip-bg: #e8f0fb;
+    --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --surface-2: #242423;
+      --border: #3a3936;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #9a988f;
+      --series-1: #3987e5;
+      --accent: #3987e5;
+      --banner-bg: #33290f;
+      --banner-border: #c98500;
+      --chip-bg: #1f2c3d;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #242423;
+    --border: #3a3936;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9a988f;
+    --series-1: #3987e5;
+    --accent: #3987e5;
+    --banner-bg: #33290f;
+    --banner-border: #c98500;
+    --chip-bg: #1f2c3d;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1400px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  h3 { font-size: 13px; margin: 0 0 8px; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  p.lede { margin: 0 0 16px; color: var(--text-secondary); max-width: 80ch; }
+  .muted { color: var(--text-muted); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 320px; min-width: 0; }
+
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); background: var(--surface-2); }
+  .banner { border: 1px solid var(--banner-border); background: var(--banner-bg); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+  .banner strong { display: block; }
+
+  .pick-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; max-height: 320px; overflow: auto; padding-right: 4px; }
+  .pick-list label { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; cursor: pointer; }
+  .pick-list label small { display: block; color: var(--text-muted); }
+  .pick-actions { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  button, select, input[type=text], textarea {
+    font: inherit; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 8px 18px; }
+  button:disabled { opacity: .55; cursor: progress; }
+  button.link { border: 0; background: none; color: var(--accent); padding: 0; }
+  textarea { width: 100%; min-height: 64px; resize: vertical; }
+  input[type=text] { width: 100%; }
+  .run-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .kind { font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: nowrap; }
+  th { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.best { font-weight: 700; }
+  tr.ref td:first-child::after { content: " (reference)"; color: var(--text-muted); font-weight: 400; }
+
+  .bars { display: grid; grid-template-columns: minmax(120px, 210px) 1fr; gap: 6px 10px; align-items: center; }
+  .bars .label { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bars .track { position: relative; height: 22px; display: flex; align-items: center; gap: 6px; }
+  .bars .bar { height: 18px; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .bars .value { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .bars .hit { display: contents; }
+  .axis-note { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+  #tooltip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.15); display: none; }
+
+  .grid th:first-child, .grid td:first-child { position: sticky; left: 0; background: var(--surface-1); z-index: 1; min-width: 220px; white-space: normal; }
+  .grid td.cell { cursor: pointer; min-width: 170px; }
+  .grid td.cell:hover { background: var(--surface-2); }
+  .grid td.cell.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .chip { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--chip-bg); font-weight: 600; font-size: 12px; }
+  .status { font-size: 12px; font-weight: 600; }
+  .ok-text::before { content: "✓ "; color: var(--good); }
+  .bad-text::before { content: "✗ "; color: var(--critical); }
+  .warn-text::before { content: "⚠ "; color: var(--warning); }
+  .err { color: var(--text-secondary); font-size: 12px; white-space: normal; max-width: 220px; }
+  .small { font-size: 12px; color: var(--text-secondary); }
+  pre { background: var(--surface-2); padding: 10px; border-radius: 6px; overflow: auto; max-height: 420px; font-size: 12px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  #status-line { color: var(--text-secondary); }
+  .hidden { display: none !important; }
+  .legend-line { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+
+  @media (max-width: 640px) {
+    .bars { grid-template-columns: 110px 1fr; }
+    .grid th:first-child, .grid td:first-child { min-width: 150px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Decision model comparison <span id="mode-badge" class="badge">…</span></h1>
+    <p class="lede">The same HR triage questions go to every model. Decision models (System One API) and general chat LLMs are
+      asked identical questions about identical requests. Their answers go through the same routing rules, and the results are scored against hand-written labels.</p>
+  </header>
+
+  <div id="synthetic-banner" class="banner hidden">
+    <strong>Mock mode: every number on this page is synthetic.</strong>
+    No model was called. All contenders share one keyword-based mock plus random noise, and their latencies are simulated.
+    Use this mode to try the page, not to compare models. Set <span class="mono">Compare:Mode=Live</span> and an API key to get real results.
+  </div>
+
+  <section class="card">
+    <div class="row">
+      <div>
+        <h2>Contenders</h2>
+        <div class="pick-actions">
+          <button class="link" data-pick="contenders" data-value="all">All</button>
+          <button class="link" data-pick="contenders" data-value="none">None</button>
+          <button class="link" data-pick="contenders" data-value="decision">Decision models only</button>
+        </div>
+        <div id="contender-list" class="pick-list"></div>
+      </div>
+      <div>
+        <h2>Questions (labeled requests)</h2>
+        <div class="pick-actions">
+          <button class="link" data-pick="samples" data-value="all">All</button>
+          <button class="link" data-pick="samples" data-value="none">None</button>
+          <button class="link" data-pick="samples" data-value="demo">Original 6 only</button>
+        </div>
+        <div id="sample-list" class="pick-list"></div>
+      </div>
+    </div>
+    <details style="margin-top:12px">
+      <summary>Add your own message (unlabeled)</summary>
+      <div style="margin-top:8px; display:grid; gap:8px">
+        <input id="custom-subject" type="text" placeholder="Subject (optional)">
+        <textarea id="custom-message" placeholder="Type an HR request to send to every contender…"></textarea>
+      </div>
+    </details>
+    <div class="run-bar" style="margin-top:14px">
+      <button id="run" class="primary">Run comparison</button>
+      <label>Repeats <select id="repeats"></select></label>
+      <span id="status-line"></span>
+    </div>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:baseline">
+        <h2>Scorecard</h2>
+        <button id="export">Download report JSON</button>
+      </div>
+      <div class="table-wrap"><table id="summary"></table></div>
+      <p class="legend-line">
+        <b>Category acc.</b> is the share of answers in an acceptable category. <b>p(correct)</b> is the average probability the model put on the right answer, so higher means more correct and better calibrated.
+        <b>Auto-route</b> is the share of requests the routing rules would send without a human.
+        <b>Agreement</b> is the share of requests where a model picked the same category as the reference model.
+        <b>Consistency</b> is the share of requests where all repeated runs picked the same category (shown when repeats are more than 1).
+        Latency is end-to-end from this app. <b>$/1k</b> is the cost per 1,000 requests; values marked ≈ are estimated from token counts.
+      </p>
+    </div>
+
+    <div class="row">
+      <div class="card"><h3>Median latency (ms) · lower is better</h3><div id="chart-latency" class="bars"></div><div id="latency-note" class="axis-note"></div></div>
+      <div class="card"><h3>Category accuracy · higher is better</h3><div id="chart-accuracy" class="bars"></div><div class="axis-note">Scale 0–100%.</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Side by side</h2>
+      <p class="small" style="margin-top:-6px">Each cell shows a model's first run: category and probability, urgency score, multi-topic and missing-info probabilities, the routing outcome, and latency. Click a cell to see the full output.</p>
+      <div class="table-wrap"><table id="grid" class="grid"></table></div>
+    </div>
+
+    <div id="detail" class="card hidden"></div>
+  </section>
+</main>
+<div id="tooltip" role="tooltip"></div>
+
+<script>
+(() => {
+  const $ = (sel) => document.querySelector(sel);
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const pct = (v) => v == null ? '–' : `${Math.round(v * 100)}%`;
+  const num = (v, d = 2) => v == null ? '–' : Number(v).toFixed(d);
+  const ms = (v) => v == null ? '–' : `${Math.round(v).toLocaleString()} ms`;
+  const usd = (v, est) => v == null ? '–' : v === 0 ? '$0' : `${est ? '≈' : ''}$${v < 0.01 ? Number(v).toPrecision(2) : Number(v).toFixed(3)}`;
+
+  let config = null;
+  let report = null;
+  let selected = null;
+
+  async function init() {
+    const res = await fetch('/api/compare/config');
+    config = await res.json();
+
+    $('#mode-badge').textContent = config.mode;
+    $('#synthetic-banner').classList.toggle('hidden', !config.isSynthetic);
+
+    $('#contender-list').innerHTML = config.contenders.map(c => `
+      <label title="${esc(c.notes || '')}">
+        <input type="checkbox" name="contender" value="${esc(c.name)}" data-kind="${esc(c.kind)}" ${c.enabled ? 'checked' : ''}>
+        <span>${esc(c.name)} <span class="kind">${c.kind === 'ChatLlm' ? 'LLM' : 'decision'}</span>
+          <small class="mono">${esc(c.endpoint)} · ${esc(c.model)}</small>
+          ${!config.isSynthetic && !c.ready ? `<small class="warn-text">${esc(c.notReadyReason)}</small>` : ''}
+        </span>
+      </label>`).join('');
+
+    $('#sample-list').innerHTML = config.samples.map(s => `
+      <label>
+        <input type="checkbox" name="sample" value="${esc(s.id)}" data-group="${esc(s.group)}" checked>
+        <span>${esc(s.title)} <small>${esc(s.tag)} · expects ${esc(s.expected.categories.join(' / '))}</small></span>
+      </label>`).join('');
+
+    $('#repeats').innerHTML = Array.from({ length: config.maxRepeats }, (_, i) => `<option>${i + 1}</option>`).join('');
+
+    document.querySelectorAll('[data-pick]').forEach(btn => btn.addEventListener('click', () => {
+      const name = btn.dataset.pick === 'contenders' ? 'contender' : 'sample';
+      document.querySelectorAll(`input[name=${name}]`).forEach(cb => {
+        const v = btn.dataset.value;
+        cb.checked = v === 'all' ? true
+          : v === 'none' ? false
+          : v === 'decision' ? cb.dataset.kind === 'SystemOne'
+          : v === 'demo' ? cb.dataset.group === 'demo' : cb.checked;
+      });
+    }));
+
+    $('#run').addEventListener('click', run);
+    $('#export').addEventListener('click', exportReport);
+  }
+
+  async function run() {
+    const contenders = [...document.querySelectorAll('input[name=contender]:checked')].map(cb => cb.value);
+    const sampleIds = [...document.querySelectorAll('input[name=sample]:checked')].map(cb => cb.value);
+    const message = $('#custom-message').value.trim();
+    const repeats = Number($('#repeats').value);
+
+    if (!contenders.length) return status('Pick at least one contender.');
+    if (!sampleIds.length && !message) return status('Pick at least one question or type your own message.');
+
+    const calls = contenders.length * (sampleIds.length + (message ? 1 : 0)) * repeats;
+    status(`Running ${calls} calls…`);
+    $('#run').disabled = true;
+
+    try {
+      const res = await fetch('/api/compare/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contenders,
+          sampleIds: sampleIds.length ? sampleIds : ['__none__'],
+          repeats,
+          customRequest: message ? { message, subject: $('#custom-subject').value.trim() || null } : null
+        })
+      });
+      if (!res.ok) {
+        const problem = await res.json().catch(() => ({}));
+        throw new Error(problem.detail || `HTTP ${res.status}`);
+      }
+      report = await res.json();
+      selected = null;
+      render();
+      status(`${calls} calls finished in ${(report.wallClockMs / 1000).toFixed(1)} s${report.isSynthetic ? ' (synthetic)' : ''}.`);
+    } catch (e) {
+      status(`Run failed: ${e.message}`);
+    } finally {
+      $('#run').disabled = false;
+    }
+  }
+
+  function status(text) { $('#status-line').textContent = text; }
+
+  function render() {
+    $('#results').classList.remove('hidden');
+    renderSummary();
+    renderBars('#chart-latency', report.summary.map(s => ({ label: s.contender, value: s.latencyP50Ms, text: ms(s.latencyP50Ms), tip: `${s.contender}<br>p50 ${ms(s.latencyP50Ms)} · p95 ${ms(s.latencyP95Ms)}` })));
+    renderBars('#chart-accuracy', report.summary.map(s => ({ label: s.contender, value: s.categoryAccuracy, max: 1, text: pct(s.categoryAccuracy), tip: `${s.contender}<br>${pct(s.categoryAccuracy)} over ${s.labeledRuns} labeled answers` })));
+    $('#latency-note').textContent = report.summary.some(s => s.latencySimulated) ? 'Simulated latency (mock mode).' : 'Measured round trip from this app, including network.';
+    renderGrid();
+    renderDetail();
+  }
+
+  function renderSummary() {
+    const cols = [
+      { key: 'categoryAccuracy', label: 'Category acc.', fmt: pct, best: 'max' },
+      { key: 'meanProbabilityOnCorrect', label: 'p(correct)', fmt: v => num(v), best: 'max' },
+      { key: 'multipleTopicsAccuracy', label: 'Multi-topic acc.', fmt: pct, best: 'max' },
+      { key: 'urgencyAccuracy', label: 'Urgency acc.', fmt: pct, best: 'max' },
+      { key: 'autoRouteRate', label: 'Auto-route', fmt: pct },
+      { key: 'agreementWithReference', label: 'Agreement', fmt: pct },
+      ...(report.repeats > 1 ? [{ key: 'consistencyRate', label: 'Consistency', fmt: pct, best: 'max' }] : []),
+      { key: 'latencyP50Ms', label: 'p50', fmt: ms, best: 'min' },
+      { key: 'latencyP95Ms', label: 'p95', fmt: ms, best: 'min' },
+      { key: 'costPer1kRequestsUsd', label: '$/1k req', fmt: (v, s) => usd(v, s.costEstimated), best: 'min' },
+      { key: 'errors', label: 'Errors', fmt: (v, s) => `${v} / ${s.calls}`, best: 'min' }
+    ];
+
+    const bestOf = {};
+    for (const c of cols.filter(c => c.best)) {
+      const vals = report.summary.map(s => s[c.key]).filter(v => v != null);
+      if (vals.length > 1) bestOf[c.key] = c.best === 'max' ? Math.max(...vals) : Math.min(...vals);
+    }
+
+    $('#summary').innerHTML = `
+      <thead><tr><th>Contender</th><th>Type</th>${cols.map(c => `<th class="num">${c.label}</th>`).join('')}</tr></thead>
+      <tbody>${report.summary.map(s => `
+        <tr class="${s.contender === report.referenceContender ? 'ref' : ''}">
+          <td>${esc(s.contender)}</td>
+          <td><span class="kind">${s.kind === 'ChatLlm' ? 'LLM' : 'decision'}</span></td>
+          ${cols.map(c => `<td class="num ${bestOf[c.key] != null && s[c.key] === bestOf[c.key] ? 'best' : ''}">${c.fmt(s[c.key], s)}</td>`).join('')}
+        </tr>`).join('')}
+      </tbody>`;
+  }
+
+  function renderBars(target, items) {
+    const max = Math.max(...items.map(i => i.max ?? 0), ...items.map(i => i.value ?? 0)) || 1;
+    const el = $(target);
+    el.innerHTML = items.map((i, idx) => `
+      <div class="label" title="${esc(i.label)}">${esc(i.label)}</div>
+      <div class="track" data-tip="${idx}">
+        ${i.value == null ? '<span class="value">no data</span>'
+          : `<div class="bar" style="width:${Math.max(0.5, (i.value / max) * 85)}%"></div><span class="value">${esc(i.text)}</span>`}
+      </div>`).join('');
+    el.querySelectorAll('.track').forEach(t => {
+      const item = items[Number(t.dataset.tip)];
+      t.addEventListener('mousemove', e => showTip(e, item.tip));
+      t.addEventListener('mouseleave', hideTip);
+    });
+  }
+
+  function showTip(e, html) {
+    const tip = $('#tooltip');
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+    tip.style.left = `${x}px`;
+    tip.style.top = `${e.clientY + 14}px`;
+  }
+  function hideTip() { $('#tooltip').style.display = 'none'; }
+
+  function renderGrid() {
+    const head = `<thead><tr><th>Request</th>${report.contenders.map(c => `<th>${esc(c.name)}<br><span class="kind">${c.kind === 'ChatLlm' ? 'LLM' : 'decision'}</span></th>`).join('')}</tr></thead>`;
+    const body = report.rows.map((row, r) => `
+      <tr>
+        <td>
+          <b>${esc(row.title)}</b><br>
+          <span class="small">${esc(row.tag)}${row.expected ? ` · expects <b>${esc(row.expected.categories.join(' / '))}</b>` : ' · unlabeled'}</span>
+        </td>
+        ${row.cells.map((cell, c) => renderCell(row, cell, r, c)).join('')}
+      </tr>`).join('');
+    const grid = $('#grid');
+    grid.innerHTML = head + `<tbody>${body}</tbody>`;
+    grid.querySelectorAll('td.cell').forEach(td => td.addEventListener('click', () => {
+      selected = { r: Number(td.dataset.r), c: Number(td.dataset.c) };
+      renderGrid();
+      renderDetail();
+      $('#detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }));
+  }
+
+  function renderCell(row, cell, r, c) {
+    const isSel = selected && selected.r === r && selected.c === c;
+    const run = cell.runs.find(x => x.ok) ?? cell.runs[0];
+    const cls = `cell ${isSel ? 'selected' : ''}`;
+    if (!run || !run.ok) {
+      return `<td class="${cls}" data-r="${r}" data-c="${c}"><div class="err warn-text">${esc(run?.error ?? 'No result')}</div></td>`;
+    }
+    const j = run.judgments, rec = run.recommendation;
+    const p = j.category.probabilities[j.category.choice];
+    const correctness = cell.categoryCorrect == null ? ''
+      : cell.categoryCorrect ? '<span class="status ok-text">correct</span>' : '<span class="status bad-text">wrong</span>';
+    const consistency = cell.consistent === false ? '<div class="small warn-text">inconsistent across repeats</div>' : '';
+    const failures = cell.runs.filter(x => !x.ok).length;
+    return `<td class="${cls}" data-r="${r}" data-c="${c}">
+      <span class="chip">${esc(j.category.choice)} ${num(p)}</span> ${correctness}
+      <div class="small mono">urg ${num(j.urgency.score)} · multi ${num(j.multipleTopics.noul)} · miss ${num(j.missingInfoInMessage.noul)}</div>
+      <div class="small">${rec.reviewStatus === 'AutoRoute' ? 'Auto-route' : `Review (${rec.reviewReasons.length})`}${rec.isUrgent ? ' · urgent' : ''} · ${ms(run.latencyMs)}</div>
+      ${consistency}${failures ? `<div class="small warn-text">${failures} failed run(s)</div>` : ''}
+    </td>`;
+  }
+
+  function renderDetail() {
+    const box = $('#detail');
+    if (!selected || !report) { box.classList.add('hidden'); return; }
+    const row = report.rows[selected.r];
+    const cell = row.cells[selected.c];
+    box.classList.remove('hidden');
+    box.innerHTML = `
+      <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap">
+        <h2>${esc(cell.contender)} · ${esc(row.title)}</h2>
+        <button class="link" id="close-detail">Close</button>
+      </div>
+      <p><b>Subject:</b> ${esc(row.request.subject || '–')}<br><b>Message:</b> ${esc(row.request.message)}</p>
+      ${row.expected ? `<p class="small">Expected: ${esc(row.expected.categories.join(' / '))} · multiple topics: ${row.expected.multipleTopics ? 'yes' : 'no'} · urgent: ${row.expected.urgent == null ? 'unlabeled' : row.expected.urgent ? 'yes' : 'no'}</p>` : ''}
+      <div class="detail-grid">
+        ${cell.runs.map((run, i) => `
+          <div>
+            <h3>Run ${i + 1}${run.ok ? '' : ' · failed'}</h3>
+            <p class="small">
+              ${ms(run.latencyMs)}${run.latencySimulated ? ' (simulated)' : ''}
+              · model <span class="mono">${esc(run.resolvedModel || '–')}</span>
+              · tokens in/out ${run.inputTokens ?? '–'}/${run.outputTokens ?? '–'}
+              · cost ${usd(run.costUsd, run.costEstimated)}
+              ${run.requestId ? `<br>request id <span class="mono">${esc(run.requestId)}</span>` : ''}
+            </p>
+            ${run.error ? `<p class="warn-text">${esc(run.error)}</p>` : ''}
+            ${run.recommendation ? `<p class="small"><b>${esc(run.recommendation.reviewStatus)}</b> → ${esc(run.recommendation.suggestedQueue)}${run.recommendation.reviewReasons.length ? `<br>${run.recommendation.reviewReasons.map(esc).join('<br>')}` : ''}</p>` : ''}
+            ${run.judgments ? `<pre>${esc(JSON.stringify(run.judgments, null, 2))}</pre>` : ''}
+            ${run.rawOutput ? `<h3>Raw LLM output</h3><pre>${esc(run.rawOutput)}</pre>` : ''}
+          </div>`).join('')}
+      </div>`;
+    $('#close-detail').addEventListener('click', () => { selected = null; renderGrid(); renderDetail(); });
+  }
+
+  function exportReport() {
+    if (!report) return;
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `comparison-${report.mode.toLowerCase()}-${new Date(report.startedAtUtc).toISOString().replace(/[:.]/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  init().catch(e => status(`Could not load configuration: ${e.message}`));
+})();
+</script>
+</body>
+</html>
